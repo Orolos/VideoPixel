@@ -1,0 +1,17 @@
+# date personale – NU se urcă pe GitHub
+library.db
+library.db-*
+posters/
+error.log
+
+# build / cache
+dist/
+build/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+SHA256SUMS.txt
+*.egg-info/
+.buildenv/
