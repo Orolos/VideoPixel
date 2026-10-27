@@ -1,6 +1,6 @@
 ; Instalator VideoPixel (Inno Setup). Se compilează automat de build_exe.bat dacă Inno Setup e instalat.
 #define AppName "VideoPixel"
-#define AppVersion "1.1"
+#define AppVersion "1.2"
 
 [Setup]
 AppId={{6E1F0C58-2D0B-4C47-9B52-5C6F1B5A7A01}
