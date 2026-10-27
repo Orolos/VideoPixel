@@ -66,7 +66,7 @@ clic = pauză, dublu clic = ecran complet.
 
 ## Player – scurtături
 Space pauză · ←/→ ±10s · Shift+←/→ ±60s · ↑/↓ volum · M mut · F sau F11 ecran complet · Esc ieșire ·
-N/P următor/anterior · S sari intro (+85s). Butoane pentru audio, subtitrări (și din fișier), viteză.
+N/P următor/anterior · S sari intro (+85s) · R reia imaginea (dacă ecranul rămâne negru) · H decodare hardware pornită/oprită. Butoane pentru audio, subtitrări (și din fișier), viteză.
 
 Datele sunt în `library.db` (lângă `main.py`, sau în `%APPDATA%\VideoPixel` pentru .exe). Fișierele video nu sunt modificate niciodată.
 

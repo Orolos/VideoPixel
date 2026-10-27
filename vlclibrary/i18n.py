@@ -117,4 +117,7 @@ EN = {
     "Alege subtitrarea": "Choose the subtitles", "Subtitrări (*.srt *.ass *.ssa *.sub *.vtt);;Toate (*)":
         "Subtitles (*.srt *.ass *.ssa *.sub *.vtt);;All (*)",
     "Eroare": "Error", "Terminat": "Finished",
+    "REIAU IMAGINEA…": "RELOADING VIDEO…",
+    "DECODARE HARDWARE: PORNITĂ": "HARDWARE DECODING: ON",
+    "DECODARE HARDWARE: OPRITĂ": "HARDWARE DECODING: OFF",
 }

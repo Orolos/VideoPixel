@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from .db import RESUME_MIN_MS, Library
 from .i18n import tr
+from .paths import data_dir
 from .scanner import VIDEO_EXT
 from .theme import BODY_FONT, C, ElidedLabel, message, pixel_icon
 
@@ -135,6 +136,29 @@ class MouseOverlay(QWidget):
         e.accept()
 
 
+def make_vlc_instance():
+    """Instanță VLC cu jurnal (vlc.log în folderul de date, doar avertismente/erori, max ~1 MB).
+    Dacă VLC nu acceptă opțiunile de jurnal, pornește fără ele."""
+    base = ["--no-video-title-show", "--quiet"]
+    extra: list[str] = []
+    try:
+        log = data_dir() / "vlc.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        if log.exists() and log.stat().st_size > 1_000_000:
+            log.unlink()
+        extra = ["--file-logging", f"--logfile={log}", "--log-verbose=1"]
+    except Exception:
+        extra = []
+    for args in ((base + extra), base) if extra else (base,):
+        try:
+            inst = vlc.Instance(*args)
+            if inst is not None and inst.media_player_new() is not None:
+                return inst
+        except Exception:
+            continue
+    return vlc.Instance(*base)
+
+
 class PlayerWindow(QMainWindow):
     progressChanged = Signal()   # s-a schimbat starea unui episod (pentru reîmprospătarea listei)
 
@@ -151,7 +175,12 @@ class PlayerWindow(QMainWindow):
         self._was_maximized = False
         self.settings = QSettings("VideoPixel", "VideoPixel")
 
-        self.instance = vlc.Instance("--no-video-title-show", "--quiet")
+        self.hw_decode = self.settings.value("hw_decode", True, type=bool)
+        self._embedded_wid: int | None = None
+        self._no_vout = 0
+        self._recoveries = 0
+        self._opened_at = time.monotonic()
+        self.instance = make_vlc_instance()
         self.mp = self.instance.media_player_new()
         self.mp.video_set_mouse_input(False)
         self.mp.video_set_key_input(False)
@@ -283,9 +312,12 @@ class PlayerWindow(QMainWindow):
         sc("N", lambda: self.step_episode(1))
         sc("P", lambda: self.step_episode(-1))
         sc("S", lambda: self.seek_by(SKIP_INTRO_MS))
+        sc("R", self._manual_reload)
+        sc("H", self._toggle_hw)
 
     def _embed_video(self):
         wid = int(self.video.winId())
+        self._embedded_wid = wid
         if sys.platform.startswith("win"):
             self.mp.set_hwnd(wid)
         elif sys.platform == "darwin":
@@ -360,10 +392,10 @@ class PlayerWindow(QMainWindow):
         self.ep_id = ep_id
         self.duration = int(ep["duration_ms"] or 0)
         self._since_save = 0
-        media = self.instance.media_new_path(str(ep["path"]))   # strict cale locală, nu URL
         resume = (not from_start and not ep["watched"] and ep["position_ms"] > RESUME_MIN_MS)
-        if resume:
-            media.add_option(f":start-time={ep['position_ms'] / 1000:.2f}")
+        media = self._new_media(ep["path"], ep["position_ms"] if resume else 0)
+        self._no_vout, self._recoveries, self._opened_at = 0, 0, time.monotonic()
+        self._embed_video()                      # fereastra video poate fi alta decât la ultima redare
         self.mp.set_media(media)
         self.mp.play()
         QTimer.singleShot(600, lambda: self.mp.audio_set_volume(self.vol.value()))
@@ -380,6 +412,61 @@ class PlayerWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         return True
+
+    # ---------- recuperare imagine (ecran negru) ----------
+    def _new_media(self, path, start_ms: int = 0):
+        media = self.instance.media_new_path(str(path))        # strict cale locală, nu URL
+        if start_ms > 0:
+            media.add_option(f":start-time={start_ms / 1000:.2f}")
+        if not self.hw_decode:
+            media.add_option(":avcodec-hw=none")
+        return media
+
+    def _reload_media(self, hw: bool | None = None):
+        """Reia redarea din același punct, cu fereastra video legată din nou (rezolvă imaginea neagră)."""
+        if self.ep_id is None:
+            return
+        ep = self.db.episode(self.ep_id)
+        if not ep:
+            return
+        pos = max(0, int(self.mp.get_time()))
+        if hw is not None and hw != self.hw_decode:
+            self.hw_decode = hw
+            self.settings.setValue("hw_decode", hw)
+        self.mp.stop()
+        self._embed_video()
+        self.mp.set_media(self._new_media(ep["path"], pos))
+        self.mp.play()
+        self._opened_at = time.monotonic()
+        self._no_vout = 0
+        QTimer.singleShot(600, lambda: self.mp.audio_set_volume(self.vol.value()))
+
+    def _manual_reload(self):
+        self.overlay.flash(tr("REIAU IMAGINEA…"))
+        self._reload_media()
+
+    def _toggle_hw(self):
+        self._reload_media(hw=not self.hw_decode)
+        self.overlay.flash(tr("DECODARE HARDWARE: PORNITĂ") if self.hw_decode else tr("DECODARE HARDWARE: OPRITĂ"))
+
+    def _watchdog(self, t: int):
+        """Dacă timpul merge dar VLC nu mai are ieșire video ~2 s, reia imaginea (a doua oară, fără decodare hardware)."""
+        wid = int(self.video.winId())
+        if wid != self._embedded_wid:             # Qt a recreat fereastra video
+            self._embed_video()
+        if t <= 0 or time.monotonic() - self._opened_at < 4 or not self.mp.is_playing():
+            self._no_vout = 0
+            return
+        try:
+            broken = self.mp.video_get_track_count() > 0 and not self.mp.has_vout()
+        except Exception:
+            return
+        self._no_vout = self._no_vout + 1 if broken else 0
+        if self._no_vout >= 4 and self._recoveries < 3:
+            self._recoveries += 1
+            if self.overlay is not None:
+                self.overlay.flash(tr("REIAU IMAGINEA…"))
+            self._reload_media(hw=False if self._recoveries >= 2 else None)
 
     def step_episode(self, step: int):
         if self.ep_id is None:
@@ -562,6 +649,9 @@ class PlayerWindow(QMainWindow):
 
         length = self.mp.get_length()
         t = self.mp.get_time()
+        self._watchdog(t)
+        if self._seeking and not (QApplication.mouseButtons() & Qt.LeftButton):
+            self._seek_released()                # eliberarea mouse-ului s-a pierdut: aplică derularea, nu rămâne blocat
         if length > 0:
             self.duration = length
         if self.duration > 0 and t >= 0 and not self._seeking:
